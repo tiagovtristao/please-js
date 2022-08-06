@@ -1,0 +1,72 @@
+[please]
+version = 16.20.2
+
+[Plugin "js"]
+packagejson =
+tsconfig =
+tsc = 
+
+[PluginDefinition]
+Name = js
+
+[PluginConfig "package_json"]
+ConfigKey = PackageJson
+Inherit = true
+DefaultValue = @//third_party/js:package_json
+
+[PluginConfig "tsconfig"]
+ConfigKey = TSConfig
+Inherit = true
+
+[PluginConfig "tsc"]
+ConfigKey = Tsc
+Inherit = true
+
+[PluginConfig "jest"]
+ConfigKey = Jest
+Optional = true
+Inherit = true
+
+[PluginConfig "jest_types"]
+ConfigKey = JestTypes
+Optional = true
+Inherit = true
+
+[PluginConfig "jest_config"]
+ConfigKey = JestConfig
+Optional = true
+Inherit = true
+
+[PluginConfig "jest_module_mappers"]
+ConfigKey = JestModuleMappers
+Optional = true
+Inherit = true
+Repeatable = true
+
+[PluginConfig "esbuild_library"]
+ConfigKey = ESBuildLibrary
+Optional = true
+Inherit = true
+
+[PluginConfig "esbuild_plugins"]
+ConfigKey = ESBuildPlugins
+Optional = true
+Inherit = true
+Repeatable = true
+
+; Plugin tools
+[PluginConfig "tsconfig_transformer"]
+ConfigKey = TSConfigTransformer
+DefaultValue = //tools:tsconfig_transformer
+
+[PluginConfig "jest_config_transformer"]
+ConfigKey = JestConfigTransformer
+DefaultValue = //tools:jest_config_transformer
+
+[PluginConfig "esbuild_bundler"]
+ConfigKey = ESBuildBundler
+DefaultValue = //tools:esbuild_bundler
+
+[PluginConfig "arcat"]
+ConfigKey = Arcat
+DefaultValue = //tools:arcat
