@@ -1,4 +1,4 @@
-# JS/TS rules
+# JavaScript/TypeScript rules for the Please build system
 
 This repo is a plugin that provides JavaScript/TypeScript rules for the [Please](https://please.build) build system.
 
