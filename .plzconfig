@@ -1,72 +1,81 @@
 [please]
-version = 16.20.2
+version = 16.26.1
 
-[Plugin "js"]
+[plugin "js"]
 packagejson =
 tsconfig =
 tsc = 
 
-[PluginDefinition]
+[plugindefinition]
 Name = js
 
-[PluginConfig "package_json"]
-ConfigKey = PackageJson
-Inherit = true
-DefaultValue = @//third_party/js:package_json
+[pluginconfig "package_json"]
+configkey = PackageJson
+inherit = true
+defaultvalue = @//third_party/js:package_json
 
-[PluginConfig "tsconfig"]
-ConfigKey = TSConfig
-Inherit = true
+[pluginconfig "tsconfig"]
+configkey = TSConfig
+inherit = true
 
-[PluginConfig "tsc"]
-ConfigKey = Tsc
-Inherit = true
+[pluginconfig "tsc"]
+configkey = Tsc
+inherit = true
 
-[PluginConfig "jest"]
-ConfigKey = Jest
-Optional = true
-Inherit = true
+[pluginconfig "jest"]
+configkey = Jest
+optional = true
+inherit = true
 
-[PluginConfig "jest_types"]
-ConfigKey = JestTypes
-Optional = true
-Inherit = true
+[pluginconfig "jest_types"]
+configkey = JestTypes
+optional = true
+inherit = true
 
-[PluginConfig "jest_config"]
-ConfigKey = JestConfig
-Optional = true
-Inherit = true
+[pluginconfig "jest_config"]
+configkey = JestConfig
+optional = true
+inherit = true
 
-[PluginConfig "jest_module_mappers"]
-ConfigKey = JestModuleMappers
-Optional = true
-Inherit = true
-Repeatable = true
+[pluginconfig "jest_junit"]
+configkey = JestJUnit
+optional = true
+inherit = true
 
-[PluginConfig "esbuild_library"]
-ConfigKey = ESBuildLibrary
-Optional = true
-Inherit = true
+[pluginconfig "jest_module_mappers"]
+configkey = JestModuleMappers
+optional = true
+inherit = true
+repeatable = true
 
-[PluginConfig "esbuild_plugins"]
-ConfigKey = ESBuildPlugins
-Optional = true
-Inherit = true
-Repeatable = true
+[pluginconfig "esbuild_library"]
+configkey = ESBuildLibrary
+optional = true
+inherit = true
+
+[pluginconfig "esbuild_plugins"]
+configkey = ESBuildPlugins
+optional = true
+inherit = true
+repeatable = true
 
 ; Plugin tools
-[PluginConfig "tsconfig_transformer"]
-ConfigKey = TSConfigTransformer
-DefaultValue = //tools:tsconfig_transformer
+[pluginconfig "tsconfig_transformer"]
+configkey = TSConfigTransformer
+defaultvalue = //tools/tsconfig-transformer
 
-[PluginConfig "jest_config_transformer"]
-ConfigKey = JestConfigTransformer
-DefaultValue = //tools:jest_config_transformer
+[pluginconfig "jest_config_transformer"]
+configkey = JestConfigTransformer
+defaultvalue = //tools/jestconfig-transformer
 
-[PluginConfig "esbuild_bundler"]
-ConfigKey = ESBuildBundler
-DefaultValue = //tools:esbuild_bundler
+[pluginconfig "esbuild_bundler"]
+configkey = ESBuildBundler
+defaultvalue = //tools/esbuild-bundler
 
-[PluginConfig "arcat"]
-ConfigKey = Arcat
-DefaultValue = //tools:arcat
+[pluginconfig "library_metadata"]
+configkey = LibraryMetadata
+defaultvalue = //tools/library-metadata
+
+[pluginconfig "arcat"]
+configkey = Arcat
+defaultvalue = //tools:arcat

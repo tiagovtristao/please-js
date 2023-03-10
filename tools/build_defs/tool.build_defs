@@ -1,0 +1,21 @@
+def tool(name:str, srcs:list, entry_point:str="", deps:list=[], visibility:list=[]):
+    assert len(srcs) > 0, "At least one source must be provided"
+    if len(srcs) > 1:
+        assert entry_point, "An entry point must be defined when multiple sources are provided"
+
+    cmds = [
+        "npm ci",
+        "npx esbuild --bundle %s --platform=node --external:esbuild --outfile=%s.js" % (f"$PKG_DIR/{entry_point}" if entry_point else "$SRC", name),
+        "sed 's|__LIBRARY_LOCATION__|\"%s\"|g' %s.js > %s" % (package_name(CONFIG.JS.PACKAGE_JSON), name, name),
+    ]
+
+    return build_rule(
+        name = name,
+        srcs = srcs,
+        cmd = " && ".join(cmds),
+        outs = [name],
+        binary = True,
+        deps = deps,
+        visibility = visibility,
+        sandbox = False,
+    )

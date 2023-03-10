@@ -1,0 +1,34 @@
+{
+  "name": "please",
+  "version": "1.0.0",
+  "description": "This repo is a plugin that provides JavaScript/TypeScript rules for the [Please](https://please.build) build system.",
+  "main": "index.js",
+  "scripts": {
+    "prettier": "prettier -w ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tiagovtristao/please-js.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tiagovtristao/please-js/issues"
+  },
+  "homepage": "https://github.com/tiagovtristao/please-js#readme",
+  "devDependencies": {
+    "commander": "^9.4.1",
+    "comment-json": "^4.2.3",
+    "prettier": "^2.8.1",
+    "semver": "^7.3.8"
+  },
+  "prettier": {
+    "trailingComma": "es5",
+    "tabWidth": 2,
+    "singleQuote": true
+  },
+  "dependencies": {
+    "esbuild": "^0.16.14"
+  }
+}

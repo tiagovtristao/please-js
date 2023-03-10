@@ -1,79 +1,234 @@
-def ts_module(name:str, src:str, out:str=None, deps:list=[], tsconfig:str=CONFIG.JS.TSCONFIG, visibility:list=[]):
-    """Compiles a TypeScript/JavaScript module to a different spec of JavaScript.
+# TODO: Incrementality is not working as expected
+# TODO: ts_project_module might not be worth for project with thousands of files
+
+def ts_project(entry_points:list=None, out_dir:str="ts-project-dist", compress:bool=False, tsconfig:str=CONFIG.JS.TSCONFIG, deps:list=[], visibility:list=[], override_name:str=None):
+    """This rule is used to configure and compile a TypeScript project to JavaScript. It is meant to
+    only be used by 'ts_project_module' rules under the project. Read the description of
+    'ts_project_module' for more information.
 
     Args:
-        name (str): Name of the module.
-        src (str): Module filename.
-        out (str): Output filename.
-        deps (list): Module dependencies.
-        tsconfig (str): TSConfig file to use. Defaults to CONFIG.JS.TSCONFIG.
-        visibility (list): Module visibility.
+        entry_points (list): All entry points to the project. They are usually 'ts_project_module' rules
+            or an higher abstraction of them (i.e. 'ts_module'). (Default: [":index"])
+        out_dir (str): Output directory of compiled artifacts. (Default: "ts-project-dist")
+        compress (bool): Whether to compress the compiled artifacts onto a tarball. (Default: False)
+        tsconfig (str): TypeScript configuration of the project. (Default: CONFIG.JS.TSCONFIG)
+        deps (list): Other dependencies that are required.
+        visibility (list): Visibility of the project.
+        override_name (str): The default rule name is hardcoded for internal reasons but can still
+            be set by the user if necessary.
     """
 
-    basename, _ = splitext(src)
-    out = out or basename
-    out_extensions = [".js", ".d.ts", ".js.map"]
+    name = override_name or "_ts_project"
+    entry_points = entry_points or [":index"]
+
+    for entry_point in entry_points:
+        assert looks_like_build_label(entry_point), f"All 'entry_points' items must be build targets. The following item is not: {entry_point}"
 
     node_modules_dir = _get_node_modules_dir()
+    tsconfigTmpFile = "_tsconfig.json"
+    target_out = out_dir
+
+    cmds = [
+        _env_cmd(f"$TOOLS_TSCONFIG_TRANSFORMER > {tsconfigTmpFile}", {
+            "NODE_PATH": f"$TMP_DIR/{node_modules_dir}",
+            "PATHS_FILE": "$TMP_DIR/$SRCS_PATHS",
+            "CONFIG_FILE": "$TMP_DIR/$SRCS_TSCONFIG",
+            "ENTRY_POINTS": "$TMP_DIR/$SRCS_ENTRY_POINTS",
+            "OUT_DIR": "." if compress else out_dir,
+        }),
+        f"$TOOLS_TSC -p {tsconfigTmpFile}",
+    ]
+    if compress:
+        target_out = f"_{name}.tar.gz"
+        cmds += [f"find . -not -path './{target_out}' | tar -cf {target_out} -T -"]
 
     return build_rule(
         name = name,
         srcs = {
-            "src": [src],
+            "entry_points": entry_points,
             "tsconfig": [tsconfig],
             "paths": [CONFIG.JS.PACKAGE_JSON],
         },
-        cmd = " && ".join([
-            f"""NODE_PATH=$TMP_DIR/{node_modules_dir} \
-                PATHS_FILE=$TMP_DIR/$SRCS_PATHS \
-                CONFIG_FILE=$TMP_DIR/$SRCS_TSCONFIG \
-                ENTRY_POINT=$SRCS_SRC \
-                OUT_DIR=_dist \
-                $TOOLS_TSCONFIG_TRANSFORMER > ._tsconfig.json""",
-            "$TOOLS_TSC -p ._tsconfig.json",
-        ] + [f"mv _dist/{basename}{ext} {out}{ext}" for ext in out_extensions]),
-        outs = [f"{out}{ext}" for ext in out_extensions],
-        deps = deps,
-        exported_deps = deps,
+        cmd = " && ".join(cmds),
+        outs = [target_out],
+        deps = entry_points + deps,
+        # Don't set `exported_deps` unless the logic and relationship between `ts_project` and `ts_project_module` build
+        # rules are properly considered. At the moment, `ts_project` is a dependency of `ts_project_module` and when
+        # building the latter we don't want to be pulling all the unnecessary dependencies of `ts_project`.
         tools = {
             "tsc": CONFIG.JS.TSC,
             "tsconfig_transformer": CONFIG.JS.TSCONFIG_TRANSFORMER,
         },
-        # Get the provided "paths" rule from CONFIG.JS.PACKAGE_JSON
-        requires = ["js-paths"],
-        visibility = visibility,
+        requires = [
+            "js-paths", # Get the provided "paths" rule from `CONFIG.JS.PACKAGE_JSON`.
+            "ts-srcs:%s" % canonicalise(f":{name}"), # Get project's original sources from `ts_project_module`.
+        ],
+        visibility = [
+            # Must be visible within the project (used by `ts_project_module`).
+            "//" + package_name() + "/...",
+        ] + visibility,
     )
 
-def sass_file(name:str, src:str, deps:list=[], visibility:list=[]):
-    """Build rule for Sass files.
+def ts_project_module(name:str, src:str, project_target:str, deps:list=[], visibility:list=[]):
+    """This rule expects a single JS/TS file and produces a JS file, its source map file and
+    TypeScript declaration file. It must be linked via the 'project_target' field to an already
+    defined 'ts_project' rule up in a parent directory.
+
+    Recommendation: For each 'ts_project' rule that represents a TypeScript project, a user-defined
+    'ts_module' rule is often defined that wraps the 'ts_project_module' rule with the 'project_target'
+    field. This allows the new 'ts_module' to be used under under this project without always repeating
+    the reference to it.
 
     Args:
-        name (str): Name of the rule.
-        src (str): Sass filename.
-        deps (deps): Sass dependencies.
+        name (str): Module rule name.
+        src (str): Module source file.
+        project_target (str): TypeScript project rule owner (i.e. ts_project).
+        deps (list): Module dependencies.
         visibility (list): Module visibility.
     """
 
-    return filegroup(
+    assert not looks_like_build_label(src), "It looks like 'src' is a target, it must be a file path instead"
+
+    project_target = canonicalise(project_target)
+    # project_pkg = package_name(project_target)
+
+    ts_src = filegroup(
         name = name,
+        tag = "src",
         srcs = [src],
         exported_deps = deps,
+        requires = [f"ts-srcs:{project_target}"],
         visibility = visibility,
     )
 
+    src_name, _ = splitext(src)
+    ts_out_ext = [".js", ".js.map", ".d.ts"]
+    # outs = [f"{src_name}{ext}" for ext in ts_out_ext]
 
-def esbuild_bundle(name:str, entry:str, out_dir:str="dist", plugins:list=[], deps:list=[], visibility:list=[]):
-    """Bundles a JavaScript application using ESBuild.
+    # def resolve_ts_project_out_dir(name):
+    # outs = get_outs(project_target)
+    # set_command(name, get_command(name).replace("__TS_PROJECT_OUT_DIR__", outs[0]))
+
+    src_name, _ = splitext(src)
+
+    prefix = package_name().removeprefix(package_name(project_target)).lstrip("/")
+    pkg_name = package_name()
+    return filegroup(
+        name = name,
+        # pre_build = resolve_ts_project_out_dir,
+        # cmd = " && ".join([f"mv {project_pkg}/__TS_PROJECT_OUT_DIR__/$PKG_DIR/{out} {out}" for out in outs]),
+        # outs = outs,
+        # deps = [project_target],
+        srcs = [f"{project_target}|ts-project-dist/{pkg_name}/{src_name}{ext}" for ext in ts_out_ext],
+        exported_deps = deps,
+        provides = {
+            f"ts-srcs:{project_target}": ts_src,
+        },
+        visibility = visibility,
+    )
+
+def ts_jest(name:str, src:str, tsconfig:str=CONFIG.JS.TSCONFIG, config:str=CONFIG.JS.JEST_CONFIG, deps:list=[], visibility:list=[]):
+    """TypeScript Jest testing rule.
+
+    Note: This rule depends on the 'jest-junit' npm library being installed.
 
     Args:
-        name (str): Name of the application.
-        entry (str): Application entry point.
-        out_dir (str): Output directory. Defaults to "dist".
-        plugins (list): ESBuild plugins to use. See the `esbuild_plugin` rule.
-        deps (list): Dependencies of the entry point.
-        visibility (list): Rule visibility.
+        name (str): Test name.
+        src (str): Test source file.
+        tsconfig (str): TypeScript configuration. (Default: CONFIG.JS.TSCONFIG)
+        config (str): Jest configuration. (Default: CONFIG.JS.JEST_CONFIG)
+        deps (list): Test dependencies.
+        visibility (list): Test visibility.
     """
 
+    assert not looks_like_build_label(src), "It looks like 'src' is a target, it must be a file path instead"
+
+    entry_point = filegroup(
+        name = name,
+        tag = "src",
+        srcs = [src],
+    )
+
+    test_archive = ts_project(
+        entry_points = [entry_point],
+        compress = True,
+        tsconfig = tsconfig,
+        deps = deps + [CONFIG.JS.JEST_TYPES, CONFIG.JS.JEST_JUNIT],
+        override_name = f"_{name}_archive",
+    )
+
+    node_modules_dir = _get_node_modules_dir()
+    jestConfigTmpFile = "_jest.config.json"
+
+    def jest_cmd(env_vars):
+        return " && ".join([
+            "tar xf $DATA_SRCS_ARCHIVE",
+            # This is required for npm library custom reporters (i.e. jest-junit)
+            # for their location to be resolved.
+            f"ln -s {node_modules_dir} node_modules",
+            _env_cmd(f"$TOOLS_JEST_CONFIG_TRANSFORMER > {jestConfigTmpFile}", env_vars),
+            f"$TOOLS_JEST --config {jestConfigTmpFile} " + "${DATA_ENTRY_POINT%.*}.js"
+        ])
+
+    test_cmds = {
+        'opt': jest_cmd({
+            "CONFIG_FILE": "$TMP_DIR/$DATA_JEST_CONFIG",
+            "PATHS_FILE": "$TMP_DIR/$DATA_PATHS",
+            "NODE_PATH": f"$TMP_DIR/{node_modules_dir}",
+            "REPORTER_OUT_DIR": "$TMP_DIR",
+            "REPORTER_OUT_FILE": "$(basename $RESULTS_FILE)",
+            "COVERAGE": "0",
+        }),
+        'cover': jest_cmd({
+            "CONFIG_FILE": "$TMP_DIR/$DATA_JEST_CONFIG",
+            "PATHS_FILE": "$TMP_DIR/$DATA_PATHS",
+            "NODE_PATH": f"$TMP_DIR/{node_modules_dir}",
+            "REPORTER_OUT_DIR": "$TMP_DIR",
+            "REPORTER_OUT_FILE": "$(basename $RESULTS_FILE)",
+            "COVERAGE": "1",
+            # TODO: It should cover the whole TS project and nothing more,
+            # as different projects should just generate coverage for
+            # themselves. This approach will also reduce memory requirements.
+            "COVERAGE_FROM": "**/*.js",
+        }) + " && mv coverage-final.json $COVERAGE_FILE",
+    }
+
+    return gentest(
+        name = name,
+        data = {
+            "entry_point": entry_point,
+            "srcs_archive": test_archive,
+            "paths": _get_paths_label(),
+            "jest_config": config,
+            # If non-empty, the Jest config passed in is expected to reference
+            # the artifacts in the 'moduleNameMapper' field. This is usually used
+            # to mock resources like CSS/SASS during testing.
+            "jest_module_mappers": CONFIG.JS.JEST_MODULE_MAPPERS or [],
+        },
+        test_cmd = test_cmds,
+        test_tools = {
+            'jest_config_transformer': CONFIG.JS.JEST_CONFIG_TRANSFORMER,
+            'jest': CONFIG.JS.JEST,
+        },
+        visibility = visibility,
+    )
+
+def esbuild_bundle(name:str, entry_point:str, entry_filename = "index.js", out_dir:str="esbuild-bundle", plugins:list=[], deps:list=[], visibility:list=[]):
+    """Bundles a JavaScript/TypeScript application using ESBuild.
+
+    Args:
+        name (str): Name of the rule.
+        entry_point (str): Single build rule entry point.
+        entry_filename (str): The name of the entry point filename. (Default: "index.js")
+        out_dir (str): Output directory. (Default: "esbuild-bundle")
+        plugins (list): Any required esbuild plugins. See 'esbuild_plugin' rule for more information.
+        deps (list): Other dependencies that are required.
+        visibility (list): Visibility of the bundle.
+    """
+
+    assert looks_like_build_label(entry_point), "It looks like 'entry_point' is a file path, it must be a target instead"
+
+    entry_point_file = join_path(package_name(entry_point), entry_filename)
     plugins = plugins or CONFIG.JS.ESBUILD_PLUGINS or []
 
     node_modules_dir = _get_node_modules_dir()
@@ -81,26 +236,20 @@ def esbuild_bundle(name:str, entry:str, out_dir:str="dist", plugins:list=[], dep
     return build_rule(
         name = name,
         srcs = {
-            "entry": [entry],
             "plugins": plugins,
             "paths": [CONFIG.JS.PACKAGE_JSON],
         },
-        cmd = " && ".join([
-            f"export ESBUILD_PLUGINS=",
-        ] + [
-            f"export ESBUILD_PLUGINS=$ESBUILD_PLUGINS:$(location {plugin})" for plugin in plugins
-        ] + [
-            f"""PLUGINS=$ESBUILD_PLUGINS \
-                NODE_PATH=$TMP_DIR/{node_modules_dir} \
-                PATHS_FILE=$TMP_DIR/$SRCS_PATHS \
-                ENTRY_POINT=$SRCS_ENTRY \
-                $TOOL"""
-        ]),
+        cmd = _env_cmd("$TOOL", {
+            "PLUGINS": ":".join([f"$(location {plugin})" for plugin in plugins]),
+            "NODE_PATH": f"$TMP_DIR/{node_modules_dir}",
+            "PATHS_FILE": "$TMP_DIR/$SRCS_PATHS",
+            "ENTRY_POINT": entry_point_file,
+        }),
         outs = [out_dir],
-        deps = [CONFIG.JS.ESBUILD_LIBRARY] + plugins + deps,
+        deps = [entry_point, CONFIG.JS.ESBUILD_LIBRARY] + plugins  + deps,
         tools = [CONFIG.JS.ESBUILD_BUNDLER],
         env = {
-            "NODE_ENV": "production"
+            "NODE_ENV": "production",
         },
         needs_transitive_deps = True,
         # Get the provided "paths" rule from CONFIG.JS.PACKAGE_JSON
@@ -108,9 +257,8 @@ def esbuild_bundle(name:str, entry:str, out_dir:str="dist", plugins:list=[], dep
         visibility = visibility,
     )
 
-
 def esbuild_plugin(name:str, plugin:str, deps:list=[], visibility=[]):
-    """User-defined JS plugin for `esbuild` that exports a default function that will be
+    """User-defined JS plugin for ESBuild that exports a default function that will be
     called with an object argument containing the following keys:
         - paths: Internal library mapping information.
         - root: Repo path.
@@ -133,68 +281,6 @@ def esbuild_plugin(name:str, plugin:str, deps:list=[], visibility=[]):
         deps = deps,
         visibility = visibility,
     )
-
-
-def jest(name:str, src:str, deps:list=[], config:str=CONFIG.JS.JEST_CONFIG, visibility:list=[]):
-    """Rule that executes test using Jest.
-
-    Args:
-        name (str): Name of the test.
-        src (str): Test filename.
-        deps (list): Test dependencies.
-        config (str): Jest configuration. Defaults to CONFIG.JS.JEST_CONFIG.
-        visibility (list): Test visibility.
-    """
-
-    module_mappers = CONFIG.JS.JEST_MODULE_MAPPERS or []
-
-    src_rule = ts_module(
-        name = f"_{name}#src",
-        src = src,
-        deps = deps + [CONFIG.JS.JEST_TYPES],
-    )
-
-    node_modules_dir = _get_node_modules_dir()
-
-    test_cmds = {
-        'opt': [
-            "tar -xf $TEST", # Unpack all sources.
-            f"""CONFIG_FILE=$TMP_DIR/$DATA_JEST_CONFIG \
-                PATHS_FILE=$TMP_DIR/$DATA_PATHS \
-                NODE_PATH=$TMP_DIR/{node_modules_dir} \
-                $TOOLS_JEST_CONFIG_TRANSFORMER > ._jest.config.json""",
-            # TODO: $DATA_SRC should be replaced only with the test file, instead of the test file along with the declaration and source mapping files.
-            f"$TOOLS_JEST --config ._jest.config.json --collectCoverage false $DATA_SRC"
-        ],
-        'cover': [] # TODO
-    }
-
-    # TODO: Find a better solution to this. Currently `data` isn't recursively provided.
-    pkg, sep, label_name = canonicalise(CONFIG.JS.PACKAGE_JSON).rpartition(":")
-    paths_label = pkg + sep + tag(label_name, "paths")
-
-    return gentest(
-        name = name,
-        cmd = "find . -not -path './$OUT'  | tar -cf $OUT -T -", # Pack all sources.
-        outs = [f".{name}.tar"],
-        deps = [src_rule],
-        needs_transitive_deps = True,
-        test_cmd = {key: " && ".join(cmd) for key, cmd in test_cmds.items()},
-        data = {
-            "src": src_rule,
-            "paths": paths_label,
-            "jest_config": config,
-            # If non-empty, the config passed in is expected to reference it.
-            "jest_module_mappers": module_mappers,
-        },
-        test_tools = {
-            'jest_config_transformer': CONFIG.JS.JEST_CONFIG_TRANSFORMER,
-            'jest': CONFIG.JS.JEST,
-        },
-        no_test_output = True, # TODO
-        visibility = visibility,
-    )
-
 
 def npm_library(name:str, archive:str, install_dir:str, deps:list=[], postinstall:bool=True, patch:str=None, visibility:list=[]):
     """Install an npm archive in the expected directory. This information should be retrieved from the package-lock.json file.
@@ -224,21 +310,21 @@ def npm_library(name:str, archive:str, install_dir:str, deps:list=[], postinstal
             f"if $(cat {install_dir}/package.json | $TOOLS_JQ -e -r '.scripts.postinstall' > .postinstall); then "
                 "sed -i 's/node /\\$TOOLS_NODE /' .postinstall;"
                 # Sending all output to /dev/null is necessary to not mess up with the `post_build` function.
-                f"cd {install_dir} && $SHELL <$TMP_DIR/.postinstall >/dev/null 2>&1;"
+                f"cd $TMP_DIR/{install_dir} && $SHELL <$TMP_DIR/.postinstall >/dev/null 2>&1;"
             "fi"
         ]
     if patch:
-        # TODO
-        fail("patch command to be implemented")
+        cmd += ["$TOOLS_PATCH -p1 -i $SRCS_PATCH"]
 
     package = build_rule(
-        name = f"_{name}#lib",
+        name = tag(name, "lib"),
         srcs = srcs,
         cmd = " && ".join(cmd + [f"ls -a1 $TMP_DIR/{install_dir}"]),
         tools = {
             "node": "node",
             "npm": "npm",
             "jq": "jq",
+            "patch": "patch",
         },
         # Collect all artifacts within the extracted directory, instead of outputting the directory itself.
         # This will prevent Please errors down the line when a directory (i.e. node_modules/react) might have other
@@ -252,20 +338,34 @@ def npm_library(name:str, archive:str, install_dir:str, deps:list=[], postinstal
             if entry != "." and entry != ".."
         ],
         labels = [
-            f"npm:install_dir:{install_dir}",
+            f"npm:location:{install_dir}",
         ],
         sandbox = not postinstall,
+    )
+
+    def metadata_post_build(name, output):
+        for line in output:
+            key, _, value = line.partition(":")
+            if key == "licences":
+                add_licences(name, value.split(","))
+            elif key == "name_version":
+                add_label(name, f"npm_package:{value}")
+
+    metadata = build_rule(
+        name = tag(name, "metadata"),
+        srcs = [package],
+        cmd = "cd %s && $TOOL" % (join_path(package_name(CONFIG.JS.PACKAGE_JSON), install_dir)),
+        post_build = metadata_post_build,
+        tools = [CONFIG.JS.LIBRARY_METADATA],
     )
 
     return filegroup(
         name = name,
         srcs = [package],
+        deps = [metadata],
         exported_deps = deps,
-        # TODO: name, version and licenses must be made available too.
-        labels = [f"npm_library"],
         visibility = visibility,
     )
-
 
 def npm_binary(name:str, library:str, binary:str, library_deps:list=[], visibility:list=[]):
     """Creates an npm binary artifact similar to Python .pex files. Once executed, it unzips the contents
@@ -279,20 +379,20 @@ def npm_binary(name:str, library:str, binary:str, library_deps:list=[], visibili
         visibility (list): Binary visibility.
     """
 
-    cache_dir = "$HOME/.cache/plz-npm"
+    tmp_dir = "/tmp/plz_npm"
 
     preamble = f"""#!/bin/sh
 
-mkdir -p {cache_dir}
-unzip -qo $0 -d {cache_dir}/$(basename $0)
-exec /usr/bin/env node {cache_dir}/$(basename $0)/__LIBRARY_INSTALL_DIR__/{binary} "$@"
+mkdir -p {tmp_dir}
+unzip -qo $0 -d {tmp_dir}/$(basename $0)
+exec /usr/bin/env node {tmp_dir}/$(basename $0)/__LIBRARY_INSTALL_DIR__/{binary} "$@"
 
 """
 
     # We are interested only in the library install directory (and not library dependency install
     # directories) since it will help us construct the path to the binary within it to be executed.
     def resolve_library_install_dir(name):
-        labels = get_labels(library, "npm:install_dir:", False, False)
+        labels = get_labels(library, "npm:location:", False, False)
         set_command(name, get_command(name).replace("__LIBRARY_INSTALL_DIR__", labels[0]))
 
     node_modules_dir = _get_node_modules_dir()
@@ -313,12 +413,11 @@ exec /usr/bin/env node {cache_dir}/$(basename $0)/__LIBRARY_INSTALL_DIR__/{binar
         visibility = visibility,
     )
 
-
 def package_json(name:str):
     """Rule for the global `package.json` file (usually at `third_party/js/package.json`)
     with Please-specific JSON information.
 
-    This rule is set up automatically when running `plz run ///js//tools:parse_package_json`.
+    This rule is set up automatically when running `plz run ///js//:packagejson-reconciler`.
     """
 
     src = "package.json"
@@ -327,7 +426,7 @@ def package_json(name:str):
     # Having a separate "paths" rule will ensure that rules depending solely on path mappings
     # don't get rebuilt if only other parts of the "package.json" file change.
     paths = build_rule(
-        name = f"_{name}#paths",
+        name = tag(name, "paths"),
         srcs = [src],
         cmd = "$TOOL --sort-keys 'try .please.paths catch {}' $SRC > $OUT",
         outs = [f"{name}_paths.json"],
@@ -344,6 +443,14 @@ def package_json(name:str):
         visibility = visibility,
     )
 
+# Small utility to isolate environment variable usage to the execution of a command.
+def _env_cmd(cmd:str, env:dict) -> str:
+    return " ".join([f"{key}={value}" for key, value in env.items()]) + f" {cmd}"
+
+# Small utility to add multiples licences.
+def add_licences(name, licences):
+    for licence in licences:
+        add_licence(name, licence)
 
 # This is required for successfully building this plugin as `CONFIG.JS` isn't
 # available at the global level when this build definition file is subincluded
@@ -351,3 +458,8 @@ def package_json(name:str):
 def _get_node_modules_dir():
     return join_path(package_name(CONFIG.JS.PACKAGE_JSON), "node_modules")
 
+# package_json()'s provided `js-paths` can't be required with runtime data (as opposed to deps),
+# so this is required for now.
+def _get_paths_label():
+    pkg, sep, label_name = canonicalise(CONFIG.JS.PACKAGE_JSON).rpartition(":")
+    return pkg + sep + tag(label_name, "paths")

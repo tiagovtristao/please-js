@@ -27,8 +27,8 @@ This repo is a plugin that provides JavaScript/TypeScript rules for the [Please]
   PreloadSubincludes = ///js//build_defs:javascript
 
   [Plugin "js"]
-  TSConfig = //:tsconfig          ; Target that includes the TypeScript config file. 
-  Tsc = //third_party/js:tsc_tool ; Use this target which will be generated later on. 
+  TSConfig = //:tsconfig          ; Target that includes the TypeScript config file.
+  Tsc = //third_party/js:tsc_tool ; Use this target which will be generated later on.
   ```
 
 - Configure `package.json`:
@@ -46,9 +46,10 @@ This repo is a plugin that provides JavaScript/TypeScript rules for the [Please]
       }
     }
     ```
-  - Run `plz run ///js//tools:parse_package_json`.
+  - Run `plz run ///js//:packagejson-reconciler`.
     - This will create/update the `package_json.build_defs` file with generated targets related to the dependencies and other information found in both `package.json` and `package-lock.json`.
   - Add the following to `third_party/js/BUILD`:
+
     ```python
     filegroup(
         name = "package_json_build_def",
@@ -65,6 +66,7 @@ This repo is a plugin that provides JavaScript/TypeScript rules for the [Please]
 ## Basic usage
 
 Compiling a TypeScript file:
+
 ```python
 ts_module(name:str, src:str, out:str=None, deps:list=[], tsconfig:str=CONFIG.JS.TSCONFIG, visibility:list=[])
 ```
@@ -115,7 +117,7 @@ Example showcasing how it looks like with additional Please-related configuratio
 
 ### `dependencies` field
 
-Dependencies are installed by running `npm install react` and then `plz run ///js//tools:parse_package_json` to generate the build target (i.e. `//third_party/js:react`).
+Dependencies are installed by running `npm install react` and then `plz run ///js//:packagejson-reconciler` to generate the build target (i.e. `//third_party/js:react`).
 
 > A different library version can be installed using an alias. For instance, `npm install my-react@npm:react@16` will install React v16 as `my-react` (i.e. `//third_party/js:my-react`).
 
@@ -126,10 +128,11 @@ Dependencies are installed by running `npm install react` and then `plz run ///j
 This is a custom object that allows us to integrate things better with Please by automatically creating/modifying different build targets.
 
 Supported fields:
+
 - `patches`: Applies patch to installed library.
 - `libraryDependencies`: Allows for other dependencies to be included when a library is required. For instance, requiring `//third_party/js:react` will bring in `//third_party/js:@types_react` as well.
 - `tools`: Generates a binary target (i.e. `//third_party/js:tsc_tool`) for a library's available binary (i.e. `tsc`). Library binaries are usually found in their `package.json`'s `bin` field.
-- `paths`: The source of truth between internal library names and their location. Build rules MUST read and apply these values where path resolving is concerned. This enforcement will prevent unwanted duplication of data that could lead to different places diverging in their values. 
+- `paths`: The source of truth between internal library names and their location. Build rules MUST read and apply these values where path resolving is concerned. This enforcement will prevent unwanted duplication of data that could lead to different places diverging in their values.
 
 ### `overrides` field
 
@@ -148,34 +151,38 @@ Bundling is supported using [esbuild](https://esbuild.github.io/).
 ### Set up
 
 - Go to `third_party/js` and run `npm install esbuild`.
-- Update automatic build target generation via `plz run ///js//tools:parse_package_json`. 
+- Update automatic build target generation via `plz run ///js//:packagejson-reconciler`.
 - Add the following to `.plzconfig`:
-    ```ini
-    [Plugin "js"]
-    ESBuildLibrary = //third_party/js:esbuild
-    ```
+  ```ini
+  [Plugin "js"]
+  ESBuildLibrary = //third_party/js:esbuild
+  ```
 
 ### Usage
 
 Bundle an application:
+
 ```python
 esbuild_bundle(name:str, entry:str, out_dir:str="dist", plugins:list=[], deps:list=[], visibility:list=[])
 ```
 
 User-defined esbuild [plugins](https://esbuild.github.io/plugins/) are supported:
+
 ```python
 esbuild_plugin(name:str, plugin:str, deps:list=[], visibility=[])
 ```
 
 The plugin MUST export a default function that will be called with an object argument containing the following keys:
+
 - `paths`: Internal library mapping information.
 - `root`: Repo path.
 
 Example:
+
 ```javascript
-module.exports = function({paths, root}) {
-    return YOUR_ESBUILD_PLUGIN_LOGIC()
-}
+module.exports = function ({ paths, root }) {
+  return YOUR_ESBUILD_PLUGIN_LOGIC();
+};
 ```
 
 ## Testing
@@ -186,23 +193,23 @@ Testing is supported using [jest](https://jestjs.io/).
 
 - Go to `third_party/js` and run `npm install jest @types/jest`.
 - Add the following to `package.json`:
-    ```json
-    "please": {
-      "tools": {
-        "jest": {
-          "library": "jest"
-        }
+  ```json
+  "please": {
+    "tools": {
+      "jest": {
+        "library": "jest"
       }
     }
-    ```
-- Update automatic build target generation via `plz run ///js//tools:parse_package_json`. 
+  }
+  ```
+- Update automatic build target generation via `plz run ///js//:packagejson-reconciler`.
 - Add the following to `.plzconfig`:
-    ```ini
-    [Plugin "js"]
-    Jest = //third_party/js:jest_tool
-    JestTypes = //third_party/js:@types_jest
-    JestConfig = //:jest_config              ; Target containing Jest configuration.
-    ```
+  ```ini
+  [Plugin "js"]
+  Jest = //third_party/js:jest_tool
+  JestTypes = //third_party/js:@types_jest
+  JestConfig = //:jest_config              ; Target containing Jest configuration.
+  ```
 
 ### Usage
 
@@ -247,4 +254,3 @@ ESBuildPlugins = //build/js:esbuild_sass_plugin  ; ESBuild plugins.
 ## Example
 
 [please-js-example](https://github.com/tiagovtristao/please-js-example) contains an example Please repo using this plugin.
-
